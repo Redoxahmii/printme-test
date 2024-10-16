@@ -11,12 +11,8 @@ const PrintJob = require("../models/print-job-schema.js");
 const otpGenerator = require("otp-generator");
 const Customer = require("../models/customer-schema.js");
 const router = express.Router();
-const fs = require("fs");
 const multer = require("multer");
-const util = require("util");
 const cloudinary = require("cloudinary").v2;
-
-const unlinkFile = util.promisify(fs.unlink);
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -25,7 +21,7 @@ cloudinary.config({
   secure: true,
 });
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({ storage: multer.memoryStorage() });
 
 const calculateCost = (pages, isColor, createdAt) => {
   let baseCost, serviceFee, timingFee;
@@ -66,6 +62,27 @@ const calculateCost = (pages, isColor, createdAt) => {
   return totalCost.toFixed(2);
 };
 
+const uploadToCloudinary = (fileBuffer) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "auto",
+        folder: "print_jobs",
+        use_filename: true,
+        unique_filename: true,
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+    );
+    uploadStream.end(fileBuffer);
+  });
+};
+
 router.post(
   "/create-print-job",
   verifyToken("customer"),
@@ -102,15 +119,8 @@ router.post(
         await customer.save();
       }
 
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        resource_type: "auto",
-        folder: "print_jobs",
-        use_filename: true,
-        unique_filename: true,
-      });
-
-      await unlinkFile(req.file.path);
-
+      // Upload the file to Cloudinary and wait for the result
+      const result = await uploadToCloudinary(req.file.buffer);
       const file_path = result.secure_url;
       let pages = 1;
 
@@ -142,11 +152,6 @@ router.post(
         .json({ message: "Print job created successfully", printJob });
     } catch (err) {
       console.error(err.message);
-      if (req.file) {
-        await unlinkFile(req.file.path).catch((unlinkError) =>
-          console.error("Failed to delete file:", unlinkError),
-        );
-      }
       res.status(500).json({ message: "Server error", err: err.message });
     }
   },
