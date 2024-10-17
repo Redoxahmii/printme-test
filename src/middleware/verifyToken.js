@@ -10,6 +10,7 @@ const verifyToken = (requiredRole) => {
     }
 
     const token = authHeader.split(" ")[1];
+    console.log(token);
 
     if (!token) {
       return res
